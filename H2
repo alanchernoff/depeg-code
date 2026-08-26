@@ -1,0 +1,247 @@
+## =============================================================================
+## HYPOTHESIS 2: Did the UST collapse (May 2022) produce contagion to other
+##               stablecoins (USDT, USDC, DAI, FRAX, BUSD)?
+##
+## Design: Event study around the UST de-peg. We test whether peg deviations
+## and short-run volatility for surviving stablecoins were abnormally elevated
+## in the weeks following UST's collapse, relative to a pre-event baseline.
+##
+## Output: hypothesis2_UST_contagion_results.docx
+##   - Descriptive/coverage table
+##   - Time-series plot of peg deviations around the event window
+##   - Pre- vs. post-event mean deviation and volatility table (per coin)
+##   - Paired significance tests (Welch t-test + Wilcoxon) on deviation shift
+##   - Volatility ratio test (variance ratio, F-test) pre vs. post
+## =============================================================================
+
+## ---- 0. Packages -----------------------------------------------------------
+required_pkgs <- c("tidyverse", "lubridate", "officer", "flextable",
+                    "zoo", "scales")
+new_pkgs <- required_pkgs[!(required_pkgs %in% installed.packages()[, "Package"])]
+if (length(new_pkgs)) install.packages(new_pkgs)
+
+library(tidyverse)
+library(lubridate)
+library(officer)
+library(flextable)
+library(zoo)
+library(scales)
+
+## ---- 1. Setup ---------------------------------------------------------------
+setwd("C:/Users/acher/research/")
+set.seed(1)
+
+DATA_FILE   <- "stablecoin_hourly_prices_wide.csv"
+OUT_DOCX    <- "hypothesis2_UST_contagion_results.docx"
+
+# Coins with observed data spanning the UST collapse (2022-04-27 onward,
+# per BUSD's start date, through the collapse). PYUSD (starts 2023) and
+# GUSD (starts mid-2022) are excluded -- they have no data in this window.
+CONTAGION_COINS <- c("USDC", "USDT", "DAI", "FRAX", "BUSD")
+
+# UST's peg broke sharply starting 2022-05-09 UTC and it was effectively
+# de-pegged (never to meaningfully recover) by 2022-05-13. We treat
+# 2022-05-09 00:00 UTC as the event date and examine a symmetric window
+# around it, plus a separate "acute" window capturing the worst days.
+EVENT_DATE     <- ymd_hms("2022-05-09 00:00:00", tz = "UTC")
+PRE_WINDOW     <- c(EVENT_DATE - days(21), EVENT_DATE - hours(1))   # 3 weeks pre
+ACUTE_WINDOW   <- c(EVENT_DATE, EVENT_DATE + days(7))               # collapse week
+POST_WINDOW    <- c(EVENT_DATE + days(7) + hours(1), EVENT_DATE + days(35)) # 4 wks after acute phase
+PLOT_WINDOW    <- c(EVENT_DATE - days(21), EVENT_DATE + days(35))
+
+## ---- 2. Load and reshape data -----------------------------------------------
+raw <- read_csv(DATA_FILE, show_col_types = FALSE)
+
+df <- raw %>%
+  mutate(datetime_utc = ymd_hms(datetime_utc, tz = "UTC")) %>%
+  pivot_longer(cols = -datetime_utc, names_to = "coin", values_to = "price") %>%
+  filter(!is.na(price))
+
+# Peg deviation in basis points: (price - 1) * 10,000
+df <- df %>% mutate(deviation_bps = (price - 1) * 10000)
+
+## ---- 3. Coverage check for the event window ---------------------------------
+coverage_tbl <- df %>%
+  filter(coin %in% c(CONTAGION_COINS, "UST")) %>%
+  group_by(coin) %>%
+  summarise(
+    first_obs = min(datetime_utc),
+    last_obs  = max(datetime_utc),
+    n_in_plot_window = sum(datetime_utc >= PLOT_WINDOW[1] & datetime_utc <= PLOT_WINDOW[2]),
+    .groups = "drop"
+  ) %>%
+  arrange(coin)
+
+print(coverage_tbl)
+
+## ---- 4. Build event-window panel --------------------------------------------
+event_panel <- df %>%
+  filter(coin %in% CONTAGION_COINS,
+         datetime_utc >= PLOT_WINDOW[1], datetime_utc <= PLOT_WINDOW[2]) %>%
+  mutate(
+    phase = case_when(
+      datetime_utc >= PRE_WINDOW[1]   & datetime_utc <= PRE_WINDOW[2]   ~ "Pre-event",
+      datetime_utc >= ACUTE_WINDOW[1] & datetime_utc <= ACUTE_WINDOW[2] ~ "Acute collapse",
+      datetime_utc >= POST_WINDOW[1]  & datetime_utc <= POST_WINDOW[2]  ~ "Post-event",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(phase))
+
+## ---- 5. Pre vs. post summary stats per coin ---------------------------------
+summary_stats <- event_panel %>%
+  group_by(coin, phase) %>%
+  summarise(
+    n_obs        = n(),
+    mean_dev_bps = mean(deviation_bps),
+    sd_dev_bps   = sd(deviation_bps),
+    max_abs_dev_bps = max(abs(deviation_bps)),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = phase,
+    values_from = c(n_obs, mean_dev_bps, sd_dev_bps, max_abs_dev_bps)
+  )
+
+print(summary_stats)
+
+## ---- 6. Statistical tests: pre vs. acute, and pre vs. post ------------------
+run_tests <- function(coin_name) {
+  pre_vals   <- event_panel %>% filter(coin == coin_name, phase == "Pre-event") %>% pull(deviation_bps)
+  acute_vals <- event_panel %>% filter(coin == coin_name, phase == "Acute collapse") %>% pull(deviation_bps)
+  post_vals  <- event_panel %>% filter(coin == coin_name, phase == "Post-event") %>% pull(deviation_bps)
+
+  safe_t <- function(x, y) {
+    if (length(x) < 2 || length(y) < 2) return(list(p = NA_real_, est_diff = NA_real_))
+    tt <- t.test(y, x)  # y - x direction
+    list(p = tt$p.value, est_diff = unname(diff(tt$estimate)))
+  }
+  safe_var <- function(x, y) {
+    if (length(x) < 2 || length(y) < 2) return(list(p = NA_real_, ratio = NA_real_))
+    vt <- var.test(y, x)
+    list(p = vt$p.value, ratio = unname(vt$estimate))
+  }
+  safe_wilcox <- function(x, y) {
+    if (length(x) < 2 || length(y) < 2) return(NA_real_)
+    suppressWarnings(wilcox.test(y, x)$p.value)
+  }
+
+  t_acute  <- safe_t(pre_vals, acute_vals)
+  t_post   <- safe_t(pre_vals, post_vals)
+  v_acute  <- safe_var(pre_vals, acute_vals)
+  v_post   <- safe_var(pre_vals, post_vals)
+  w_acute  <- safe_wilcox(pre_vals, acute_vals)
+  w_post   <- safe_wilcox(pre_vals, post_vals)
+
+  tibble(
+    coin = coin_name,
+    mean_shift_acute_bps = t_acute$est_diff, p_ttest_acute = t_acute$p, p_wilcox_acute = w_acute,
+    var_ratio_acute = v_acute$ratio, p_vartest_acute = v_acute$p,
+    mean_shift_post_bps  = t_post$est_diff,  p_ttest_post  = t_post$p,  p_wilcox_post  = w_post,
+    var_ratio_post  = v_post$ratio,  p_vartest_post  = v_post$p
+  )
+}
+
+test_results <- map_dfr(CONTAGION_COINS, run_tests) %>%
+  mutate(across(where(is.numeric), ~round(.x, 4)))
+
+print(test_results)
+
+## ---- 7. Plot: peg deviation around the event window -------------------------
+plot_df <- event_panel %>%
+  mutate(coin = factor(coin, levels = CONTAGION_COINS))
+
+p_event <- ggplot(plot_df, aes(x = datetime_utc, y = deviation_bps)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_vline(xintercept = as.numeric(EVENT_DATE), linetype = "dotted", color = "firebrick") +
+  geom_line(color = "#2b6cb0", linewidth = 0.3) +
+  facet_wrap(~coin, scales = "free_y", ncol = 1) +
+  labs(
+    title = "Peg Deviation Around the UST Collapse (May 2022)",
+    subtitle = "Dotted red line = event date (2022-05-09). Dashed line = perfect peg.",
+    x = NULL, y = "Deviation from $1.00 (bps)"
+  ) +
+  scale_x_datetime(date_breaks = "1 week", labels = date_format("%b %d")) +
+  theme_minimal(base_size = 10) +
+  theme(strip.text = element_text(face = "bold"))
+
+## ---- 8. Bar chart: mean absolute deviation by phase --------------------------
+bar_df <- event_panel %>%
+  group_by(coin, phase) %>%
+  summarise(mean_abs_dev = mean(abs(deviation_bps)), .groups = "drop") %>%
+  mutate(
+    coin  = factor(coin, levels = CONTAGION_COINS),
+    phase = factor(phase, levels = c("Pre-event", "Acute collapse", "Post-event"))
+  )
+
+p_bar <- ggplot(bar_df, aes(x = coin, y = mean_abs_dev, fill = phase)) +
+  geom_col(position = position_dodge(width = 0.75), width = 0.7) +
+  labs(
+    title = "Mean Absolute Peg Deviation by Event Phase",
+    x = NULL, y = "Mean |deviation| (bps)", fill = NULL
+  ) +
+  scale_fill_manual(values = c("Pre-event" = "#90cdf4", "Acute collapse" = "#e53e3e", "Post-event" = "#68d391")) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "top")
+
+## ---- 9. Assemble Word document ----------------------------------------------
+ft_coverage <- coverage_tbl %>%
+  mutate(first_obs = format(first_obs, "%Y-%m-%d %H:%M"),
+         last_obs  = format(last_obs, "%Y-%m-%d %H:%M")) %>%
+  rename(Coin = coin, `First obs.` = first_obs, `Last obs.` = last_obs,
+         `Obs. in plot window` = n_in_plot_window) %>%
+  flextable() %>% autofit() %>% theme_vanilla()
+
+ft_summary <- summary_stats %>%
+  flextable() %>% autofit() %>% theme_vanilla() %>%
+  colformat_double(digits = 2)
+
+ft_tests <- test_results %>%
+  rename(Coin = coin) %>%
+  flextable() %>% autofit() %>% theme_vanilla() %>%
+  fontsize(size = 8, part = "all")
+
+doc <- read_docx() %>%
+  body_add_par("Hypothesis 2: Contagion Effects from the UST Collapse (May 2022)", style = "heading 1") %>%
+  body_add_par(paste0("Generated ", format(Sys.time(), "%Y-%m-%d %H:%M %Z")), style = "Normal") %>%
+  body_add_par("", style = "Normal") %>%
+  body_add_par(
+    paste0(
+      "Hypothesis: Following UST's de-peg beginning 2022-05-09, other stablecoins ",
+      "(USDT, USDC, DAI, FRAX, BUSD) exhibited abnormally elevated peg deviation ",
+      "and/or volatility relative to their pre-event baseline, consistent with ",
+      "market-wide contagion rather than UST-idiosyncratic risk."
+    ), style = "Normal"
+  ) %>%
+  body_add_par("", style = "Normal") %>%
+  body_add_par("1. Data Coverage", style = "heading 2") %>%
+  body_add_flextable(ft_coverage) %>%
+  body_add_par("", style = "Normal") %>%
+  body_add_par("2. Peg Deviation Around the Event Window", style = "heading 2") %>%
+  body_add_gg(p_event, width = 6.5, height = 8) %>%
+  body_add_par("", style = "Normal") %>%
+  body_add_par("3. Mean Absolute Deviation by Phase", style = "heading 2") %>%
+  body_add_gg(p_bar, width = 6.5, height = 3.8) %>%
+  body_add_par("", style = "Normal") %>%
+  body_add_par("4. Descriptive Statistics by Phase", style = "heading 2") %>%
+  body_add_flextable(ft_summary) %>%
+  body_add_par("", style = "Normal") %>%
+  body_add_par("5. Statistical Tests (Pre-event baseline vs. Acute / Post windows)", style = "heading 2") %>%
+  body_add_par(
+    "Welch t-test and Wilcoxon rank-sum test on deviation levels; F-test (var.test) on variance ratio.",
+    style = "Normal"
+  ) %>%
+  body_add_flextable(ft_tests) %>%
+  body_add_par("", style = "Normal") %>%
+  body_add_par("6. Interpretation Notes", style = "heading 2") %>%
+  body_add_par(
+    paste0(
+      "A significant positive mean_shift with p < 0.05 in the Acute or Post column indicates ",
+      "the coin's peg deviation moved abnormally away from baseline during/after the UST collapse. ",
+      "A var_ratio > 1 with a significant p_vartest indicates elevated volatility. Interpret BUSD ",
+      "cautiously outside its own data window (BUSD data begins 2022-04-27, shortly before the event)."
+    ), style = "Normal"
+  )
+
+print(doc, target = OUT_DOCX)
+cat("Document written to:", file.path(getwd(), OUT_DOCX), "\n")
