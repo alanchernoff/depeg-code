@@ -1,3 +1,8 @@
+## =============================================================================
+## HYPOTHESIS 2: Did the UST collapse (May 2022) produce contagion to other
+##               stablecoins (USDT, USDC, DAI, FRAX, BUSD)?
+## =============================================================================
+
 ## ---- 0. Packages -----------------------------------------------------------
 required_pkgs <- c("tidyverse", "lubridate", "officer", "flextable",
                    "zoo", "scales")
