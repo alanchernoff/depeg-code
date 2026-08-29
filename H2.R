@@ -23,7 +23,7 @@ set.seed(1)
 DATA_FILE   <- "stablecoin_hourly_prices_wide.csv"
 OUT_DOCX    <- "hypothesis2_UST_contagion_results.docx"
 
-CONTAGION_COINS <- c("USDC", "USDT", "DAI", "FRAX", "BUSD")
+CONTAGION_COINS <- c("USDC", "USDT", "FRAX")
 
 EVENT_DATE     <- ymd_hms("2022-05-09 00:00:00", tz = "UTC")
 PRE_WINDOW     <- c(EVENT_DATE - days(21), EVENT_DATE - hours(1))
@@ -226,7 +226,7 @@ doc <- read_docx() %>%
   body_add_par(
     paste0(
       "Hypothesis: Following UST's de-peg beginning 2022-05-09, other stablecoins ",
-      "(USDT, USDC, DAI, FRAX, BUSD) exhibited abnormally elevated peg deviation ",
+      "(USDT, USDC, FRAX) exhibited abnormally elevated peg deviation ",
       "and/or volatility relative to their pre-event baseline, consistent with ",
       "market-wide contagion rather than UST-idiosyncratic risk."
     ), style = "Normal"
@@ -269,9 +269,8 @@ doc <- read_docx() %>%
       "A significant positive mean shift with p < 0.05 in the Acute collapse or Post-event window ",
       "indicates the coin's peg deviation moved abnormally away from baseline during/after the UST ",
       "collapse. A variance ratio > 1 with a significant p (F-test) indicates elevated volatility. ",
-      "Interpret BUSD cautiously outside its own data window (BUSD data begins 2022-04-27, shortly ",
-      "before the event). Interpret any coin flagged in Section 6 cautiously until the clipping ",
-      "concern is resolved against the raw source data."
+      "Interpret any coin flagged in Section 6 cautiously until the clipping concern is resolved ",
+      "against the raw source data."
     ), style = "Normal"
   )
 
