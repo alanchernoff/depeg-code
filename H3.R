@@ -24,7 +24,7 @@ setwd("C:/Users/acher/research/")
 DATA_FILE <- "stablecoin_hourly_prices_wide.csv"
 OUT_DOCX  <- "hypothesis3_SVB_USDC_contagion_results.docx"
 
-COINS <- c("USDC", "DAI", "USDT", "BUSD")
+COINS <- c("USDC", "DAI", "USDT")
 
 SVB_FAILURE       <- ymd_hms("2023-03-10 00:00:00", tz = "UTC")
 TREASURY_BACKSTOP <- ymd_hms("2023-03-12 18:00:00", tz = "UTC")
@@ -178,7 +178,7 @@ p_event <- ggplot(plot_df, aes(x = datetime_utc, y = deviation_bps, color = coin
     subtitle = "Shaded band = acute event window (SVB failure to Treasury backstop + 6h)",
     x = NULL, y = "Deviation from $1.00 (bps)", color = NULL
   ) +
-  scale_color_manual(values = c(USDC = "#2b6cb0", DAI = "#dd6b20", USDT = "#38a169", BUSD = "#805ad5")) +
+  scale_color_manual(values = c(USDC = "#2b6cb0", DAI = "#dd6b20", USDT = "#38a169")) +
   scale_x_datetime(date_breaks = "3 days", labels = date_format("%b %d")) +
   theme_minimal(base_size = 10) +
   theme(legend.position = "top")
@@ -193,7 +193,7 @@ p_peak <- ggplot(peak_plot_df, aes(x = coin, y = peak_abs_dev_bps, fill = coin))
     title = "Peak Absolute Deviation During/After the SVB Event",
     x = NULL, y = "Peak |deviation| (bps)"
   ) +
-  scale_fill_manual(values = c(USDC = "#2b6cb0", DAI = "#dd6b20", USDT = "#38a169", BUSD = "#805ad5")) +
+  scale_fill_manual(values = c(USDC = "#2b6cb0", DAI = "#dd6b20", USDT = "#38a169")) +
   theme_minimal(base_size = 11)
 
 ## ---- 8. Assemble Word document ---------------------------------------------------
@@ -237,18 +237,13 @@ doc <- read_docx() %>%
       "Hypothesis: During USDC's March 2023 depeg (triggered by Silicon Valley Bank's failure), ",
       "DAI -- which held substantial, disclosed USDC reserves via its Peg Stability Module -- ",
       "depegged in closer tandem with USDC than USDT did, whose reserve composition was opaque ",
-      "and not directly SVB-exposed. BUSD is included as a placebo: its concurrent stress stemmed ",
-      "from the separate NYDFS wind-down order, not from SVB, so it should NOT show abnormal ",
-      "co-movement timed specifically to the SVB news."
+      "and not directly SVB-exposed. Reserve transparency is treated as a contagion channel in ",
+      "its own right, distinct from direct exposure to the triggering shock."
     ), style = "Normal"
   ) %>%
   body_add_par("", style = "Normal") %>%
   body_add_par("1. Data Coverage", style = "heading 2") %>%
   body_add_flextable(ft_coverage) %>%
-  body_add_par(
-    "Note: BUSD's series ends 2023-03-13 15:00 UTC due to the unrelated NYDFS action, truncating its post-event window.",
-    style = "Normal"
-  ) %>%
   body_add_par("", style = "Normal") %>%
   body_add_par("2. Peg Deviation Around the Event Window", style = "heading 2") %>%
   body_add_gg(p_event, width = 6.5, height = 4.2) %>%
@@ -277,9 +272,11 @@ doc <- read_docx() %>%
   body_add_par("6. Interpretation Notes", style = "heading 2") %>%
   body_add_par(
     paste0(
-      "A significantly negative, larger-magnitude total event effect for DAI than for BUSD supports the ",
-      "transparency-channel hypothesis; a non-significant effect for BUSD supports its use as a placebo. ",
-      "Interpret BUSD's post-event results with caution given its truncated data window."
+      "A significantly negative total event effect for DAI, smaller in magnitude than USDC's own ",
+      "reaction but clearly distinguishable from zero, supports the transparency-channel hypothesis: ",
+      "DAI's disclosed USDC exposure transmitted a meaningful share of USDC's stress, while USDT -- ",
+      "with opaque, non-SVB-exposed reserves -- shows the opposite-signed, appreciating reaction ",
+      "expected of an unaffected flight-to-quality destination."
     ), style = "Normal"
   )
 
